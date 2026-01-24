@@ -6,41 +6,68 @@ import {
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, ReferenceLine, Legend
 } from 'recharts';
-import { motion, AnimatePresence, Reorder, useDragControls } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { Expense } from '@/types';
 import { formatDateShort, getGenreColor, DEFAULT_GENRES } from '@/utils';
-import { Wallet, AlertCircle, TrendingUp, History, ExternalLink, CalendarDays, RefreshCw, Settings, X, Plus, Trash2, GripVertical } from 'lucide-react';
+import { Wallet, AlertCircle, TrendingUp, History, ExternalLink, CalendarDays, RefreshCw, Settings, X, Plus, Trash2, ArrowUp, ArrowDown } from 'lucide-react';
 
-const SortableGenreItem = ({ genre, onUpdate, onDelete, onDragEnd }: { genre: string, onUpdate: (val: string) => void, onDelete: () => void, onDragEnd: () => void }) => {
-  const controls = useDragControls();
+// --- 物理ボタンで並び替え可能なリストアイテム ---
+const SortableGenreItem = ({ 
+  genre, 
+  index,
+  totalCount,
+  onUpdate, 
+  onDelete, 
+  onMoveUp, 
+  onMoveDown 
+}: { 
+  genre: string, 
+  index: number,
+  totalCount: number,
+  onUpdate: (val: string) => void, 
+  onDelete: () => void, 
+  onMoveUp: () => void, 
+  onMoveDown: () => void
+}) => {
+  const [localValue, setLocalValue] = useState(genre);
+
+  useEffect(() => {
+    setLocalValue(genre);
+  }, [genre]);
 
   return (
-    <Reorder.Item
-      value={genre}
-      dragListener={false}
-      dragControls={controls}
-      onDragEnd={onDragEnd}
-      className="flex items-center gap-2 bg-gray-50 p-2 rounded-xl border border-gray-100 touch-none relative"
-    >
-      <div 
-        onPointerDown={(e) => controls.start(e)}
-        className="text-gray-400 cursor-grab active:cursor-grabbing p-2 hover:text-blue-500 touch-none"
-      >
-        <GripVertical size={18} />
+    <div className="flex items-center gap-2 bg-gray-50 p-2 rounded-xl border border-gray-100 relative">
+      <div className="flex flex-col gap-1 mr-1">
+        <button 
+          onClick={onMoveUp} 
+          disabled={index === 0}
+          className="p-1 bg-white border border-gray-200 rounded hover:bg-blue-50 text-gray-400 hover:text-blue-500 disabled:opacity-30 disabled:hover:bg-white disabled:hover:text-gray-400"
+        >
+          <ArrowUp size={12} />
+        </button>
+        <button 
+          onClick={onMoveDown}
+          disabled={index === totalCount - 1}
+          className="p-1 bg-white border border-gray-200 rounded hover:bg-blue-50 text-gray-400 hover:text-blue-500 disabled:opacity-30 disabled:hover:bg-white disabled:hover:text-gray-400"
+        >
+          <ArrowDown size={12} />
+        </button>
       </div>
 
       <input 
         type="text"
-        value={genre}
-        onChange={(e) => onUpdate(e.target.value)}
-        onBlur={onDragEnd}
+        value={localValue}
+        onChange={(e) => setLocalValue(e.target.value)}
+        onBlur={() => {
+          if (localValue !== genre) onUpdate(localValue);
+        }}
         className="flex-1 bg-transparent font-bold text-sm text-gray-700 focus:outline-none border-b border-transparent focus:border-blue-300 py-1"
       />
 
       <button onClick={onDelete} className="text-red-300 hover:text-red-500 p-2">
         <Trash2 size={16} />
       </button>
-    </Reorder.Item>
+    </div>
   );
 };
 
@@ -64,7 +91,11 @@ export default function Home() {
       try {
         await new Promise(resolve => setTimeout(resolve, 800));
         const resExpenses = await fetch('/api/expenses');
-        const dataExpenses = await resExpenses.json();
+        let dataExpenses = [];
+        try {
+          dataExpenses = await resExpenses.json();
+          if (!Array.isArray(dataExpenses)) dataExpenses = [];
+        } catch (e) { console.error(e); }
         setExpenses(dataExpenses);
 
         const resSettings = await fetch('/api/settings');
@@ -86,13 +117,8 @@ export default function Home() {
     init();
   }, []);
 
-  const saveGenres = async (genres: string[]) => {
-    // 空文字除外 + 重複除外 (Setを使って重複を消す)
+  const saveGenresToApi = async (genres: string[]) => {
     const validGenres = Array.from(new Set(genres.filter(g => g.trim() !== '')));
-    
-    // 状態を更新（これが見た目の重複を即座に直す）
-    setCustomGenres(validGenres);
-
     await fetch('/api/settings', {
       method: 'POST',
       body: JSON.stringify({ genres: validGenres }),
@@ -101,7 +127,6 @@ export default function Home() {
 
   const addGenre = () => {
     if (!newGenreName) return;
-    // 既にある場合は追加しない
     if (customGenres.includes(newGenreName)) {
       setNewGenreName('');
       return;
@@ -109,20 +134,34 @@ export default function Home() {
     const updated = [...customGenres, newGenreName];
     setCustomGenres(updated);
     setNewGenreName('');
-    saveGenres(updated);
+    saveGenresToApi(updated);
   };
 
   const removeGenre = (index: number) => {
     const updated = [...customGenres];
     updated.splice(index, 1);
     setCustomGenres(updated);
-    saveGenres(updated);
+    saveGenresToApi(updated);
   };
 
   const updateGenreName = (index: number, newName: string) => {
     const updated = [...customGenres];
     updated[index] = newName;
     setCustomGenres(updated);
+    saveGenresToApi(updated);
+  };
+
+  const moveGenre = (index: number, direction: 'up' | 'down') => {
+    const updated = [...customGenres];
+    if (direction === 'up') {
+        if (index === 0) return;
+        [updated[index - 1], updated[index]] = [updated[index], updated[index - 1]];
+    } else {
+        if (index === updated.length - 1) return;
+        [updated[index], updated[index + 1]] = [updated[index + 1], updated[index]];
+    }
+    setCustomGenres(updated);
+    saveGenresToApi(updated);
   };
 
   const updateGenre = async (rowNumber: number, genre: string) => {
@@ -139,24 +178,29 @@ export default function Home() {
     setExpenses(prev => prev.map(e => e.rowNumber === rowNumber ? { ...e, description: newText } : e));
   };
 
+  // ★修正1: ヘッダーやリスト用（掛け算する）フォーマッター
   const formatCurrency = (amount: number) => {
-    return isJPY 
-      ? `¥${Math.round(amount * currentRate).toLocaleString()}`
-      : `€${amount.toLocaleString()}`;
+    if (isJPY) {
+      return `¥${Math.round(amount * currentRate).toLocaleString()}`;
+    } else {
+      return `€${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    }
   };
 
-  // ★修正ポイント1: 重複を許さないロジックに変更
+  // ★修正2: グラフ用（既に掛け算されている値を受け取る）フォーマッター
+  const formatGraphValue = (value: number) => {
+    if (isJPY) {
+      // 既に円になっているので、通貨記号をつけるだけ
+      return `¥${Math.round(value).toLocaleString()}`;
+    } else {
+      return `€${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    }
+  };
+
   const displayGenres = useMemo(() => {
-    // 1. 設定されているジャンル（Setで重複を確実に排除）
     const distinctCustom = Array.from(new Set(customGenres));
-    
-    // 2. データに存在するジャンル
     const existing = new Set(expenses.map(e => e.genre).filter(Boolean));
-    
-    // 3. 設定にないものだけを抽出（重複チェック）
     const uniqueExisting = Array.from(existing).filter(g => !distinctCustom.includes(g));
-    
-    // 結合
     return [...distinctCustom, ...uniqueExisting];
   }, [expenses, customGenres]);
 
@@ -181,11 +225,18 @@ export default function Home() {
   const rate = isJPY ? currentRate : 1;
 
   const generateChartData = (groupBy: 'genre' | 'daily' | 'monthly') => {
+    const roundIfJPY = (val: number) => isJPY ? Math.round(val) : parseFloat(val.toFixed(2));
+
     if (groupBy === 'genre') {
       const total = expenses.reduce((sum, e) => sum + e.amount, 0);
       return displayGenres.map(genre => {
         const val = expenses.filter(e => e.genre === genre).reduce((sum, e) => sum + e.amount, 0);
-        return { name: genre, value: Math.round(val * rate), percent: total > 0 ? (val / total * 100).toFixed(1) : 0 };
+        return { 
+          name: genre, 
+          // ★ここで既にレート換算されている
+          value: roundIfJPY(val * rate), 
+          percent: total > 0 ? (val / total * 100).toFixed(1) : 0 
+        };
       }).filter(d => d.value > 0);
     }
     const map = new Map<string, any>();
@@ -197,18 +248,19 @@ export default function Home() {
       }
       if (!map.has(key)) map.set(key, { name: key, total: 0 });
       const entry = map.get(key);
-      const val = Math.round(e.amount * rate);
+      const val = roundIfJPY(e.amount * rate); // ★ここでも換算済み
       entry[e.genre || '未分類'] = (entry[e.genre || '未分類'] || 0) + val;
       entry.total += val;
     });
     return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
   };
 
-  const genreData = useMemo(() => generateChartData('genre'), [expenses, displayGenres, rate]);
-  const dailyData = useMemo(() => generateChartData('daily'), [expenses, rate]);
-  const monthlyData = useMemo(() => generateChartData('monthly'), [expenses, rate]);
-  const dailyAverage = useMemo(() => dailyData.length ? Math.round(dailyData.reduce((s:number, d:any) => s + d.total, 0) / dailyData.length) : 0, [dailyData]);
-  const monthlyAverage = useMemo(() => monthlyData.length ? Math.round(monthlyData.reduce((s:number, d:any) => s + d.total, 0) / monthlyData.length) : 0, [monthlyData]);
+  const genreData = useMemo(() => generateChartData('genre'), [expenses, displayGenres, rate, isJPY]);
+  const dailyData = useMemo(() => generateChartData('daily'), [expenses, rate, isJPY]);
+  const monthlyData = useMemo(() => generateChartData('monthly'), [expenses, rate, isJPY]);
+  
+  const dailyAverage = useMemo(() => dailyData.length ? (dailyData.reduce((s:number, d:any) => s + d.total, 0) / dailyData.length) : 0, [dailyData]);
+  const monthlyAverage = useMemo(() => monthlyData.length ? (monthlyData.reduce((s:number, d:any) => s + d.total, 0) / monthlyData.length) : 0, [monthlyData]);
 
   if (loading) return (
     <motion.div 
@@ -264,20 +316,20 @@ export default function Home() {
                 </div>
 
                 <div className="overflow-y-auto space-y-2 pr-1 flex-1 touch-pan-y">
-                  <Reorder.Group axis="y" values={customGenres} onReorder={setCustomGenres} className="space-y-2 p-0 list-none">
+                  <div className="space-y-2">
                     {customGenres.map((g, index) => (
                       <SortableGenreItem 
-                        key={`${g}-${index}`} // Keyを一意にするためにindexを付与(安全策)
+                        key={`${g}-${index}`}
+                        index={index}
+                        totalCount={customGenres.length}
                         genre={g} 
                         onUpdate={(val) => updateGenreName(index, val)} 
                         onDelete={() => removeGenre(index)}
-                        onDragEnd={() => saveGenres(customGenres)} 
+                        onMoveUp={() => moveGenre(index, 'up')}
+                        onMoveDown={() => moveGenre(index, 'down')}
                       />
                     ))}
-                  </Reorder.Group>
-                </div>
-                <div className="mt-2 text-xs text-center text-gray-400">
-                  左側のハンドル( <GripVertical size={10} className="inline"/> )で並び替え
+                  </div>
                 </div>
               </motion.div>
             </motion.div>
@@ -410,7 +462,6 @@ export default function Home() {
               </div>
             </div>
 
-            {/* ★修正ポイント2: min-h-[300px] を追加して、描画初期のサイズ計算エラーを防ぐ */}
             <div className="h-72 w-full min-h-[300px]">
               <ResponsiveContainer width="100%" height="100%">
                 {activeTab === 'genre' ? (
@@ -418,7 +469,8 @@ export default function Home() {
                     <Pie data={genreData} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={2} dataKey="value">
                       {genreData.map((entry, index) => <Cell key={`cell-${index}`} fill={getGenreColor(entry.name)} stroke="none" />)}
                     </Pie>
-                    <RechartsTooltip contentStyle={{borderRadius:'12px', border:'none'}} formatter={(v:any, n:any, p:any) => [isJPY?`¥${v.toLocaleString()}`:`€${v.toLocaleString()}`, `${n} (${p.payload.percent}%)`]} />
+                    {/* ★修正: formatGraphValueを使う */}
+                    <RechartsTooltip contentStyle={{borderRadius:'12px', border:'none'}} formatter={(v: any, n: any, p: any) => [formatGraphValue(Number(v)), `${n} (${p.payload.percent}%)`]} />
                     <Legend verticalAlign="bottom" height={36} iconType="circle" iconSize={8} wrapperStyle={{fontSize: '12px'}} />
                   </PieChart>
                 ) : (
@@ -426,7 +478,8 @@ export default function Home() {
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
                     <XAxis dataKey="name" tick={{fontSize:10}} axisLine={false} tickLine={false} dy={10} />
                     <YAxis tick={{fontSize:10}} axisLine={false} tickLine={false} />
-                    <RechartsTooltip cursor={{fill:'transparent'}} contentStyle={{borderRadius:'12px', border:'none'}} />
+                    {/* ★修正: formatGraphValueを使う */}
+                    <RechartsTooltip cursor={{fill:'transparent'}} contentStyle={{borderRadius:'12px', border:'none'}} formatter={(value: any) => formatGraphValue(Number(value))} />
                     {displayGenres.map((genre) => (
                       <Bar key={genre} dataKey={genre} stackId="a" fill={getGenreColor(genre)} radius={[0,0,0,0]}>
                         {(activeTab === 'daily' ? dailyData : monthlyData).map((entry:any, index:number) => (
@@ -434,7 +487,8 @@ export default function Home() {
                         ))}
                       </Bar>
                     ))}
-                    <ReferenceLine y={activeTab === 'daily' ? dailyAverage : monthlyAverage} stroke="#8B5CF6" strokeDasharray="3 3" label={{position:'top', value:`AVG: ${isJPY?'¥':'€'}${(activeTab === 'daily' ? dailyAverage : monthlyAverage).toLocaleString()}`, fill:'#8B5CF6', fontSize:10, fontWeight:'bold'}} />
+                    {/* ★修正: 平均線のラベルもformatGraphValueを使う */}
+                    <ReferenceLine y={activeTab === 'daily' ? dailyAverage : monthlyAverage} stroke="#8B5CF6" strokeDasharray="3 3" label={{position:'top', value:`AVG: ${formatGraphValue(activeTab === 'daily' ? dailyAverage : monthlyAverage)}`, fill:'#8B5CF6', fontSize:10, fontWeight:'bold'}} />
                   </BarChart>
                 )}
               </ResponsiveContainer>
@@ -456,7 +510,8 @@ export default function Home() {
                           <span className="text-slate-600 text-xs font-bold">{g}</span>
                         </div>
                         <span className="font-bold text-gray-800">
-                          {isJPY ? `¥${selectedChartItem[g].toLocaleString()}` : `€${selectedChartItem[g].toLocaleString()}`}
+                          {/* ★修正: ここもformatGraphValue */}
+                          {formatGraphValue(selectedChartItem[g])}
                         </span>
                       </div>
                     ))}

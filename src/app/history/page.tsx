@@ -4,30 +4,36 @@ import { useEffect, useState, useMemo } from 'react';
 import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Expense } from '@/types';
-// ★修正: 新しい関数と変数をインポート
 import { formatDateShort, getGenreColor, DEFAULT_GENRES } from '@/utils';
-import { ArrowUpDown, Filter, AlertCircle, Home, RefreshCw } from 'lucide-react';
+import { ArrowUpDown, Filter, AlertCircle, Home, RefreshCw, Calendar, ArrowUp, ArrowDown } from 'lucide-react';
 
 export default function HistoryPage() {
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [loading, setLoading] = useState(true);
+  
+  // フィルター & ソート設定
   const [filterGenre, setFilterGenre] = useState<string>('All');
+  const [filterMonth, setFilterMonth] = useState<string>('All');
+  
   const [sortKey, setSortKey] = useState<'date' | 'amount'>('date');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   
-  // カスタムジャンル管理
   const [customGenres, setCustomGenres] = useState<string[]>([]);
   
-  // 通貨レート (履歴ページでも円換算したい場合用)
+  // 通貨レート
   const [isJPY, setIsJPY] = useState(false);
   const [currentRate, setCurrentRate] = useState(160);
 
   useEffect(() => {
     const fetchData = async () => {
       try {
-        // 1. データ取得
+        // 1. データ取得 (エラー対策済み)
         const res = await fetch('/api/expenses');
-        const data = await res.json();
+        let data = [];
+        try {
+            data = await res.json();
+            if (!Array.isArray(data)) data = [];
+        } catch (e) { console.error(e); }
         setExpenses(data);
 
         // 2. ジャンル設定取得
@@ -64,44 +70,84 @@ export default function HistoryPage() {
     setExpenses(prev => prev.map(e => e.rowNumber === rowNumber ? { ...e, description: newText } : e));
   };
 
-  // 表示用ジャンルリスト (設定 + 実データにあるもの)
+  // 表示用ジャンルリスト
   const displayGenres = useMemo(() => {
     const existing = new Set(expenses.map(e => e.genre).filter(Boolean));
-    return Array.from(new Set([...customGenres, ...existing]));
+    return Array.from(new Set([...customGenres, ...Array.from(existing)]));
   }, [expenses, customGenres]);
 
+  // 月のリスト（データが存在する月のみ抽出）
+  const monthList = useMemo(() => {
+    const months = new Set(expenses.map(e => {
+        const d = new Date(e.date);
+        return isNaN(d.getTime()) ? null : `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}`;
+    }).filter(Boolean));
+    return Array.from(months).sort().reverse() as string[];
+  }, [expenses]);
+
+  // 未分類アイテム（フィルターに関わらず常に表示）
   const uncategorizedItems = useMemo(() => {
     return expenses.filter(e => !e.genre).sort((a, b) => b.rowNumber - a.rowNumber);
   }, [expenses]);
 
+  // 履歴リスト（フィルター＆ソート適用）
   const historyItems = useMemo(() => {
-    let data = expenses.filter(e => e.genre);
-    if (filterGenre !== 'All') data = data.filter(e => e.genre === filterGenre);
+    // ジャンルがあるものだけを履歴リストの対象にする
+    let data = expenses.filter(e => e.genre); 
+
+    // 1. ジャンルフィルター
+    if (filterGenre !== 'All') {
+        data = data.filter(e => e.genre === filterGenre);
+    }
     
+    // 2. 月フィルター
+    if (filterMonth !== 'All') {
+        data = data.filter(e => {
+            const d = new Date(e.date);
+            const m = `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}`;
+            return m === filterMonth;
+        });
+    }
+    
+    // 3. ソート
     data.sort((a, b) => {
-      if (sortKey === 'amount') return sortOrder === 'asc' ? a.amount - b.amount : b.amount - a.amount;
-      // 日付順 (行番号を代理として使用)
+      if (sortKey === 'amount') {
+          return sortOrder === 'asc' ? a.amount - b.amount : b.amount - a.amount;
+      }
+      // 日付順 (行番号を代理として使用すると安定)
       return sortOrder === 'asc' ? a.rowNumber - b.rowNumber : b.rowNumber - a.rowNumber;
     });
 
     return data;
-  }, [expenses, filterGenre, sortKey, sortOrder]);
+  }, [expenses, filterGenre, filterMonth, sortKey, sortOrder]);
 
   const toggleSort = (key: 'date' | 'amount') => {
-    if (sortKey === key) setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
-    else { setSortKey(key); setSortOrder('desc'); }
+    if (sortKey === key) {
+        setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else { 
+        setSortKey(key); 
+        setSortOrder('desc'); 
+    }
   };
 
+  // 通貨フォーマット（円換算対応）
   const formatCurrency = (amount: number) => {
-    return isJPY 
-      ? `¥${Math.round(amount * currentRate).toLocaleString()}`
-      : `€${amount.toLocaleString()}`;
+    if (isJPY) {
+      return `¥${Math.round(amount * currentRate).toLocaleString()}`;
+    } else {
+      return `€${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    }
   };
 
-  if (loading) return <div className="flex justify-center items-center h-screen bg-white text-blue-300 font-bold animate-pulse">Loading...</div>;
+  if (loading) return (
+    <div className="flex justify-center items-center h-screen bg-gray-50 text-blue-400 font-bold animate-pulse">
+        Loading...
+    </div>
+  );
 
   return (
     <main className="min-h-screen bg-white pb-24 text-gray-700 font-rounded">
+      
       {/* Header */}
       <div className="sticky top-0 z-20 bg-white/90 backdrop-blur-md border-b border-gray-50 px-5 py-4 flex items-center justify-between">
         <div className="flex items-center gap-4">
@@ -110,7 +156,6 @@ export default function HistoryPage() {
           </Link>
           <h1 className="text-lg font-bold text-gray-800">History</h1>
         </div>
-        {/* 通貨切り替えボタン (履歴ページにも追加) */}
         <button 
           onClick={() => setIsJPY(!isJPY)}
           className="bg-gray-100 px-3 py-1.5 rounded-full text-xs font-bold flex items-center gap-2 hover:bg-gray-200 transition-all"
@@ -119,9 +164,9 @@ export default function HistoryPage() {
         </button>
       </div>
 
-      <div className="p-5 space-y-8">
+      <div className="p-5 space-y-6">
         
-        {/* Uncategorized Section */}
+        {/* Uncategorized Section (常に表示) */}
         <AnimatePresence>
           {uncategorizedItems.length > 0 && (
             <section>
@@ -136,7 +181,7 @@ export default function HistoryPage() {
                     layout
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, scale: 0.9, height: 0, marginBottom: 0, transition: { duration: 0.3 } }}
+                    exit={{ opacity: 0, height: 0, marginBottom: 0 }}
                     className="bg-white p-5 rounded-2xl shadow-[0_4px_20px_-5px_rgba(0,0,0,0.1)] border border-gray-50 relative overflow-hidden"
                   >
                      <div className="flex justify-between items-start mb-4">
@@ -155,7 +200,6 @@ export default function HistoryPage() {
                         {formatCurrency(item.amount)}
                       </span>
                     </div>
-                    {/* 改行形式に変更 */}
                     <div className="flex flex-wrap gap-2">
                       {displayGenres.map(genre => (
                         <button
@@ -174,9 +218,47 @@ export default function HistoryPage() {
           )}
         </AnimatePresence>
 
-        {/* Filter & Sort Controls */}
-        <section className="bg-gray-50 p-4 rounded-3xl">
-          <div className="flex items-center gap-2 overflow-x-auto pb-2 no-scrollbar mb-2">
+        {/* --- Controls Section --- */}
+        <section className="bg-gray-50 p-4 rounded-3xl space-y-4">
+          
+          {/* 月選択 & ソートボタン */}
+          <div className="flex justify-between items-center">
+            {/* 月選択プルダウン */}
+            <div className="relative">
+                <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={14} />
+                <select 
+                    value={filterMonth}
+                    onChange={(e) => setFilterMonth(e.target.value)}
+                    className="pl-9 pr-8 py-2 bg-white border border-gray-200 rounded-full text-xs font-bold text-gray-600 focus:outline-none focus:border-blue-400 appearance-none shadow-sm"
+                >
+                    <option value="All">All Months</option>
+                    {monthList.map(m => (
+                        <option key={m} value={m}>{m}</option>
+                    ))}
+                </select>
+            </div>
+
+            {/* ソート切り替え */}
+            <div className="flex gap-2">
+                <button 
+                    onClick={() => toggleSort('date')} 
+                    className={`flex items-center gap-1 px-3 py-2 rounded-full text-xs font-bold transition-all ${sortKey === 'date' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-400'}`}
+                >
+                    Date 
+                    {sortKey === 'date' && (sortOrder === 'desc' ? <ArrowDown size={12}/> : <ArrowUp size={12}/>)}
+                </button>
+                <button 
+                    onClick={() => toggleSort('amount')} 
+                    className={`flex items-center gap-1 px-3 py-2 rounded-full text-xs font-bold transition-all ${sortKey === 'amount' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-400'}`}
+                >
+                    Amount
+                    {sortKey === 'amount' && (sortOrder === 'desc' ? <ArrowDown size={12}/> : <ArrowUp size={12}/>)}
+                </button>
+            </div>
+          </div>
+
+          {/* 横スクロールジャンルリスト (スクロールバー用の余白 pb-2 を追加) */}
+          <div className="flex items-center gap-2 overflow-x-auto pb-2">
             <div className="flex-shrink-0 flex items-center justify-center w-8 h-8 bg-white rounded-full text-gray-400 shadow-sm">
               <Filter size={14} />
             </div>
@@ -185,24 +267,21 @@ export default function HistoryPage() {
               className={`flex-shrink-0 px-4 py-2 rounded-full text-xs font-bold transition-all shadow-sm ${filterGenre === 'All' ? 'bg-blue-500 text-white' : 'bg-white text-gray-500'}`}
             >All</button>
             {displayGenres.map(g => (
-              <button key={g} onClick={() => setFilterGenre(g)} className={`flex-shrink-0 px-4 py-2 rounded-full text-xs font-bold transition-all shadow-sm ${filterGenre === g ? 'bg-blue-500 text-white' : 'bg-white text-gray-500'}`}>
+              <button 
+                key={g} 
+                onClick={() => setFilterGenre(g)} 
+                className={`flex-shrink-0 px-4 py-2 rounded-full text-xs font-bold transition-all shadow-sm ${filterGenre === g ? 'bg-blue-500 text-white' : 'bg-white text-gray-500'}`}
+              >
                 {g}
               </button>
             ))}
           </div>
-          <div className="flex gap-6 border-t border-gray-200/50 pt-3 px-2">
-             <button onClick={() => toggleSort('date')} className={`flex items-center gap-1 text-xs font-bold ${sortKey === 'date' ? 'text-blue-600' : 'text-gray-400'}`}>
-               Date <ArrowUpDown size={12} />
-             </button>
-             <button onClick={() => toggleSort('amount')} className={`flex items-center gap-1 text-xs font-bold ${sortKey === 'amount' ? 'text-blue-600' : 'text-gray-400'}`}>
-               Amount <ArrowUpDown size={12} />
-             </button>
-          </div>
+
         </section>
 
-        {/* Full History List */}
+        {/* History List */}
         <div className="space-y-3 pb-10">
-          <AnimatePresence initial={false}>
+          <AnimatePresence initial={false} mode="popLayout">
           {historyItems.map((item) => (
             <motion.div 
               key={item.rowNumber}
@@ -221,7 +300,6 @@ export default function HistoryPage() {
                     onBlur={(e) => saveDescription(item.rowNumber, e.target.value)}
                     className="font-bold text-gray-700 text-sm bg-transparent focus:outline-none focus:border-b focus:border-blue-200 w-full"
                   />
-                  {/* ★修正: getGenreColorを使用 */}
                   <span 
                     className="text-[10px] px-2 py-0.5 rounded-full font-bold whitespace-nowrap"
                     style={{backgroundColor: getGenreColor(item.genre) + '33', color: '#64748b'}}
@@ -239,8 +317,12 @@ export default function HistoryPage() {
             </motion.div>
           ))}
           </AnimatePresence>
+          
           {historyItems.length === 0 && (
-             <div className="text-center py-20 text-gray-300 font-bold">No history found...</div>
+             <div className="text-center py-20 text-gray-300 font-bold flex flex-col items-center">
+                 <Filter size={32} className="opacity-20 mb-2"/>
+                 No history found for this filter.
+             </div>
           )}
         </div>
       </div>
