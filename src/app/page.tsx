@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useCallback } from 'react';
 import Link from 'next/link';
 import { 
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, 
@@ -9,7 +9,10 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import { Expense } from '@/types';
 import { formatDateShort, getGenreColor, DEFAULT_GENRES } from '@/utils';
-import { Wallet, AlertCircle, TrendingUp, History, ExternalLink, CalendarDays, RefreshCw, Settings, X, Plus, Trash2, ArrowUp, ArrowDown } from 'lucide-react';
+// ★修正: Loadingコンポーネントをインポート
+import Loading from '@/components/Loading';
+// ★修正: X, Plus をインポートに追加
+import { Wallet, AlertCircle, TrendingUp, History, RefreshCw, Settings, Trash2, RotateCcw, Clock, ArrowUp, ArrowDown, ExternalLink, X, Plus } from 'lucide-react';
 
 // --- 物理ボタンで並び替え可能なリストアイテム ---
 const SortableGenreItem = ({ 
@@ -50,7 +53,7 @@ const SortableGenreItem = ({
           disabled={index === totalCount - 1}
           className="p-1 bg-white border border-gray-200 rounded hover:bg-blue-50 text-gray-400 hover:text-blue-500 disabled:opacity-30 disabled:hover:bg-white disabled:hover:text-gray-400"
         >
-          <ArrowDown size={12} />
+           <ArrowDown size={12} />
         </button>
       </div>
 
@@ -74,6 +77,7 @@ const SortableGenreItem = ({
 export default function Home() {
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   
   const [customGenres, setCustomGenres] = useState<string[]>([]);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -86,36 +90,42 @@ export default function Home() {
   const [selectedChartItem, setSelectedChartItem] = useState<any>(null);
   const [customGenreInput, setCustomGenreInput] = useState<{row: number, val: string} | null>(null);
 
-  useEffect(() => {
-    const init = async () => {
+  const fetchData = useCallback(async (isBackground = false) => {
+    if (!isBackground) setRefreshing(true);
+    try {
+      const resExpenses = await fetch('/api/expenses');
+      let dataExpenses = [];
       try {
-        await new Promise(resolve => setTimeout(resolve, 800));
-        const resExpenses = await fetch('/api/expenses');
-        let dataExpenses = [];
-        try {
-          dataExpenses = await resExpenses.json();
-          if (!Array.isArray(dataExpenses)) dataExpenses = [];
-        } catch (e) { console.error(e); }
-        setExpenses(dataExpenses);
+        dataExpenses = await resExpenses.json();
+        if (!Array.isArray(dataExpenses)) dataExpenses = [];
+      } catch (e) { console.error(e); }
+      setExpenses(dataExpenses);
 
-        const resSettings = await fetch('/api/settings');
-        const dataSettings = await resSettings.json();
-        if (dataSettings.genres && dataSettings.genres.length > 0) {
-          setCustomGenres(dataSettings.genres);
-        } else {
-          setCustomGenres(DEFAULT_GENRES);
-        }
-
-        const resRate = await fetch('https://api.exchangerate-api.com/v4/latest/EUR');
-        const dataRate = await resRate.json();
-        if (dataRate?.rates?.JPY) setCurrentRate(dataRate.rates.JPY);
-
-      } finally {
-        setLoading(false);
+      const resSettings = await fetch('/api/settings');
+      const dataSettings = await resSettings.json();
+      if (dataSettings.genres && dataSettings.genres.length > 0) {
+        setCustomGenres(dataSettings.genres);
+      } else {
+        setCustomGenres(DEFAULT_GENRES);
       }
-    };
-    init();
+
+      const resRate = await fetch('https://api.exchangerate-api.com/v4/latest/EUR');
+      const dataRate = await resRate.json();
+      if (dataRate?.rates?.JPY) setCurrentRate(dataRate.rates.JPY);
+
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
   }, []);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  useEffect(() => {
+    setSelectedChartItem(null);
+  }, [isJPY, activeTab]);
 
   const saveGenresToApi = async (genres: string[]) => {
     const validGenres = Array.from(new Set(genres.filter(g => g.trim() !== '')));
@@ -178,7 +188,6 @@ export default function Home() {
     setExpenses(prev => prev.map(e => e.rowNumber === rowNumber ? { ...e, description: newText } : e));
   };
 
-  // ★修正1: ヘッダーやリスト用（掛け算する）フォーマッター
   const formatCurrency = (amount: number) => {
     if (isJPY) {
       return `¥${Math.round(amount * currentRate).toLocaleString()}`;
@@ -187,10 +196,8 @@ export default function Home() {
     }
   };
 
-  // ★修正2: グラフ用（既に掛け算されている値を受け取る）フォーマッター
   const formatGraphValue = (value: number) => {
     if (isJPY) {
-      // 既に円になっているので、通貨記号をつけるだけ
       return `¥${Math.round(value).toLocaleString()}`;
     } else {
       return `€${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -211,13 +218,17 @@ export default function Home() {
 
   const totalAmount = useMemo(() => expenses.reduce((sum, item) => sum + item.amount, 0), [expenses]);
   
-  const last30DaysTotal = useMemo(() => {
+  const todayTotal = useMemo(() => {
     const today = new Date();
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(today.getDate() - 30);
-    return expenses
-      .filter(e => { const d = parseDate(e.date); return d >= thirtyDaysAgo && d <= today; })
-      .reduce((sum, e) => sum + e.amount, 0);
+    return expenses.reduce((sum, item) => {
+        const d = parseDate(item.date);
+        if (d.getDate() === today.getDate() && 
+            d.getMonth() === today.getMonth() && 
+            d.getFullYear() === today.getFullYear()) {
+            return sum + item.amount;
+        }
+        return sum;
+    }, 0);
   }, [expenses]);
   
   const uncategorized = useMemo(() => expenses.filter(e => !e.genre), [expenses]);
@@ -233,7 +244,6 @@ export default function Home() {
         const val = expenses.filter(e => e.genre === genre).reduce((sum, e) => sum + e.amount, 0);
         return { 
           name: genre, 
-          // ★ここで既にレート換算されている
           value: roundIfJPY(val * rate), 
           percent: total > 0 ? (val / total * 100).toFixed(1) : 0 
         };
@@ -248,9 +258,9 @@ export default function Home() {
       }
       if (!map.has(key)) map.set(key, { name: key, total: 0 });
       const entry = map.get(key);
-      const val = roundIfJPY(e.amount * rate); // ★ここでも換算済み
+      const val = roundIfJPY(e.amount * rate);
       entry[e.genre || '未分類'] = (entry[e.genre || '未分類'] || 0) + val;
-      entry.total += val;
+      entry.total = (entry.total || 0) + val;
     });
     return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
   };
@@ -262,23 +272,8 @@ export default function Home() {
   const dailyAverage = useMemo(() => dailyData.length ? (dailyData.reduce((s:number, d:any) => s + d.total, 0) / dailyData.length) : 0, [dailyData]);
   const monthlyAverage = useMemo(() => monthlyData.length ? (monthlyData.reduce((s:number, d:any) => s + d.total, 0) / monthlyData.length) : 0, [monthlyData]);
 
-  if (loading) return (
-    <motion.div 
-      initial={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', zIndex: 9999 }}
-      className="bg-blue-500 flex flex-col items-center justify-center touch-none overflow-hidden"
-    >
-      <motion.div
-        animate={{ rotate: 360 }}
-        transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
-        className="mb-4"
-      >
-        <Wallet className="text-white w-16 h-16" />
-      </motion.div>
-      <div className="text-white font-bold text-lg animate-pulse tracking-widest">LOADING...</div>
-    </motion.div>
-  );
+  // ★修正: ローディング画面を別コンポーネントに変更
+  if (loading) return <Loading />;
 
   return (
     <div className="min-h-screen w-full bg-gray-100 flex justify-center items-start overflow-x-hidden">
@@ -345,6 +340,13 @@ export default function Home() {
               </h1>
               <div className="flex gap-2">
                 <button 
+                  onClick={() => fetchData(false)}
+                  className={`bg-white/20 backdrop-blur-md p-2 rounded-full hover:bg-white/30 border border-white/30 ${refreshing ? 'animate-spin' : ''}`}
+                >
+                  <RotateCcw size={16} />
+                </button>
+
+                <button 
                   onClick={() => setIsJPY(!isJPY)}
                   className="bg-white/20 backdrop-blur-md px-3 py-2 rounded-full text-xs font-bold flex items-center gap-1 hover:bg-white/30 border border-white/30"
                 >
@@ -365,8 +367,10 @@ export default function Home() {
                 <div className="text-4xl font-extrabold tracking-tight">{formatCurrency(totalAmount)}</div>
               </div>
               <div className="text-right">
-                <div className="text-blue-100 text-xs font-bold mb-1 opacity-80 flex items-center justify-end gap-1"><CalendarDays size={12} /> LAST 30 DAYS</div>
-                <div className="text-xl font-bold">{formatCurrency(last30DaysTotal)}</div>
+                <div className="text-blue-100 text-xs font-bold mb-1 opacity-80 flex items-center justify-end gap-1">
+                    <Clock size={12} /> TODAY
+                </div>
+                <div className="text-xl font-bold">{formatCurrency(todayTotal)}</div>
               </div>
             </div>
           </div>
@@ -469,7 +473,6 @@ export default function Home() {
                     <Pie data={genreData} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={2} dataKey="value">
                       {genreData.map((entry, index) => <Cell key={`cell-${index}`} fill={getGenreColor(entry.name)} stroke="none" />)}
                     </Pie>
-                    {/* ★修正: formatGraphValueを使う */}
                     <RechartsTooltip contentStyle={{borderRadius:'12px', border:'none'}} formatter={(v: any, n: any, p: any) => [formatGraphValue(Number(v)), `${n} (${p.payload.percent}%)`]} />
                     <Legend verticalAlign="bottom" height={36} iconType="circle" iconSize={8} wrapperStyle={{fontSize: '12px'}} />
                   </PieChart>
@@ -478,7 +481,6 @@ export default function Home() {
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
                     <XAxis dataKey="name" tick={{fontSize:10}} axisLine={false} tickLine={false} dy={10} />
                     <YAxis tick={{fontSize:10}} axisLine={false} tickLine={false} />
-                    {/* ★修正: formatGraphValueを使う */}
                     <RechartsTooltip cursor={{fill:'transparent'}} contentStyle={{borderRadius:'12px', border:'none'}} formatter={(value: any) => formatGraphValue(Number(value))} />
                     {displayGenres.map((genre) => (
                       <Bar key={genre} dataKey={genre} stackId="a" fill={getGenreColor(genre)} radius={[0,0,0,0]}>
@@ -487,7 +489,6 @@ export default function Home() {
                         ))}
                       </Bar>
                     ))}
-                    {/* ★修正: 平均線のラベルもformatGraphValueを使う */}
                     <ReferenceLine y={activeTab === 'daily' ? dailyAverage : monthlyAverage} stroke="#8B5CF6" strokeDasharray="3 3" label={{position:'top', value:`AVG: ${formatGraphValue(activeTab === 'daily' ? dailyAverage : monthlyAverage)}`, fill:'#8B5CF6', fontSize:10, fontWeight:'bold'}} />
                   </BarChart>
                 )}
@@ -501,7 +502,13 @@ export default function Home() {
                   initial={{opacity: 0, height: 0}} animate={{opacity: 1, height: 'auto'}} exit={{opacity: 0, height: 0}}
                   className="mt-4 pt-4 border-t border-dashed border-gray-100"
                 >
-                  <div className="text-xs font-bold text-gray-400 mb-2">{selectedChartItem.name} Breakdown</div>
+                  <div className="flex justify-between items-center mb-3 px-1">
+                     <div className="text-xs font-bold text-gray-400">{selectedChartItem.name} Breakdown</div>
+                     <div className="text-lg font-extrabold text-blue-600">
+                        {formatGraphValue(selectedChartItem.total)}
+                     </div>
+                  </div>
+
                   <div className="grid grid-cols-2 gap-2 text-sm">
                     {displayGenres.map(g => selectedChartItem[g] > 0 && (
                       <div key={g} className="flex justify-between items-center bg-gray-50 px-3 py-2 rounded-lg">
@@ -510,7 +517,6 @@ export default function Home() {
                           <span className="text-slate-600 text-xs font-bold">{g}</span>
                         </div>
                         <span className="font-bold text-gray-800">
-                          {/* ★修正: ここもformatGraphValue */}
                           {formatGraphValue(selectedChartItem[g])}
                         </span>
                       </div>
